@@ -1,0 +1,75 @@
+---
+- name: Install Go
+  ansible.builtin.apt:
+    name: golang-go
+    state: present
+    update_cache: yes
+
+- name: Create project dir
+  ansible.builtin.file:
+    path: /opt/sis3_project
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Create main.go
+  ansible.builtin.copy:
+    dest: /opt/sis3_project/main.go
+    content: |
+      package main
+
+      import (
+        "fmt"
+        "net/http"
+      )
+
+      func handler(w http.ResponseWriter, r *http.Request) {
+        fmt.Fprintf(w, "SIS3 working!")
+      }
+
+      func main() {
+        http.HandleFunc("/", handler)
+        fmt.Println("Server running on port 8081")
+        http.ListenAndServe(":8081", nil)
+      }
+
+- name: Initialize go module (only if missing)
+  ansible.builtin.command:
+    cmd: go mod init sis3_project
+    chdir: /opt/sis3_project
+  args:
+    creates: /opt/sis3_project/go.mod
+
+- name: Build SIS3 binary
+  ansible.builtin.command:
+    cmd: go build -o sis3_app main.go
+    chdir: /opt/sis3_project
+
+- name: Create systemd service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/sis3.service
+    content: |
+      [Unit]
+      Description=SIS3 Go Web Service
+      After=network.target
+
+      [Service]
+      ExecStart=/opt/sis3_project/sis3_app
+      WorkingDirectory=/opt/sis3_project
+      Restart=always
+      User=root
+      Environment=PORT=8081
+
+      [Install]
+      WantedBy=multi-user.target
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: yes
+
+- name: Enable and restart SIS3
+  ansible.builtin.systemd:
+    name: sis3
+    state: restarted
+    enabled: yes
