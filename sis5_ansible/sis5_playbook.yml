@@ -1,6 +1,6 @@
 ---
 - name: SIS5 – full automation of SIS2, SIS3, SIS4
-  hosts: remote_vm
+  hosts: local
   become: yes
 
   roles:
