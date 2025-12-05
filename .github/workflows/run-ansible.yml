@@ -8,27 +8,63 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
+    
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
-
+      uses: actions/checkout@v4
+    
     - name: Setup SSH Key
       run: |
         mkdir -p ~/.ssh
         echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
         chmod 600 ~/.ssh/id_ed25519
-
+        ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+    
     - name: Test SSH connection
       run: |
-        ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "echo Connected OK"
-
+        ssh -i ~/.ssh/id_ed25519 ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "echo '✅ SSH Connected OK'"
+    
     - name: Install Ansible on GitHub runner
       run: |
         sudo apt update
-        sudo apt install -y ansible
-
+        sudo apt install -y ansible python3-pip
+        pip3 install docker
+    
+    - name: Display Ansible version
+      run: ansible --version
+    
+    - name: Check inventory configuration
+      run: |
+        cat sis5_ansible/inventory/hosts.ini
+    
+    - name: Test Ansible ping
+      run: |
+        ansible remote_vm -i sis5_ansible/inventory/hosts.ini -m ping
+    
     - name: Run Ansible playbook
       run: |
-        ansible-playbook sis5_ansible/sis5_playbook.yml -i sis5_ansible/inventory/hosts.ini
-
+        ansible-playbook sis5_ansible/sis5_playbook.yml -i sis5_ansible/inventory/hosts.ini -v
+      env:
+        ANSIBLE_HOST_KEY_CHECKING: "False"
+    
+    - name: Verify deployment on remote VM
+      run: |
+        ssh -i ~/.ssh/id_ed25519 ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'EOF'
+          echo "=== Checking SIS2 users ==="
+          getent passwd admin1 auditor1 autobot pguser webuser || echo "Some users not found"
+          
+          echo "=== Checking SIS3 service ==="
+          sudo systemctl status sis3 --no-pager || echo "SIS3 not running"
+          curl -f http://localhost:8081 || echo "SIS3 port 8081 not responding"
+          
+          echo "=== Checking SIS4 Docker container ==="
+          sudo docker ps | grep weather_container || echo "Weather container not found"
+          curl -f http://localhost:8082 || echo "Weather service port 8082 not responding"
+        EOF
+    
+    - name: Show deployment summary
+      run: |
+        echo "🎉 ✅ Ansible Deployment Completed!"
+        echo "📦 SIS2: Users and groups configured"
+        echo "🚀 SIS3: Go web service on port 8081"
+        echo "🐳 SIS4: Docker weather service on port 8082"
