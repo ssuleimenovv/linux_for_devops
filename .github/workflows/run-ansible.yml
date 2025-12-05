@@ -7,33 +7,28 @@ on:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
     
-    - name: Install Ansible and dependencies
+    - name: Install Ansible if needed
       run: |
-        sudo apt update
-        sudo apt install -y ansible python3-pip
-        pip3 install docker
+        which ansible || sudo apt install -y ansible
     
     - name: Display Ansible version
       run: ansible --version
     
-    - name: Update inventory to use localhost
+    - name: Show current inventory
       run: |
-        cat > sis5_ansible/inventory/hosts.ini << 'EOF'
-        [local]
-        localhost ansible_connection=local
-        EOF
+        cat sis5_ansible/inventory/hosts.ini
     
-    - name: Update playbook to use local host
+    - name: Show playbook hosts
       run: |
-        sed -i 's/hosts: remote_vm/hosts: local/' sis5_ansible/sis5_playbook.yml
+        grep "hosts:" sis5_ansible/sis5_playbook.yml
     
-    - name: Run Ansible playbook on GitHub runner
+    - name: Run Ansible playbook on local machine
       run: |
         cd sis5_ansible
         ansible-playbook sis5_playbook.yml -v
@@ -46,18 +41,17 @@ jobs:
     
     - name: Verify SIS3 service
       run: |
-        sudo systemctl status sis3 --no-pager || echo "Checking service..."
-        sleep 3
-        curl -f http://localhost:8081 || echo "Service starting..."
+        sudo systemctl status sis3 --no-pager
+        curl -f http://localhost:8081
     
     - name: Verify SIS4 Docker container
       run: |
-        sudo docker ps -a
-        curl -f http://localhost:8082 || echo "Container starting..."
+        sudo docker ps | grep weather_container
+        curl -f http://localhost:8082
     
     - name: Show deployment summary
       run: |
-        echo "🎉 ✅ Ansible CI/CD Pipeline Completed!"
-        echo "📦 SIS2: Users and groups configured"
-        echo "🚀 SIS3: Go web service deployed"
-        echo "🐳 SIS4: Docker weather service deployed"
+        echo "🎉 ✅ Ansible executed on self-hosted runner (your VM)!"
+        echo "📦 SIS2: Users configured"
+        echo "🚀 SIS3: Service running on port 8081"
+        echo "🐳 SIS4: Container running on port 8082"
