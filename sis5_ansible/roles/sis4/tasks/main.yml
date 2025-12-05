@@ -4,7 +4,7 @@
     name: docker.io
     state: present
     update_cache: yes
-
+  
 - name: Enable Docker
   ansible.builtin.systemd:
     name: docker
@@ -21,16 +21,13 @@
     dest: /opt/weather_project/main.go
     content: |
       package main
-
       import (
         "fmt"
         "net/http"
       )
-
       func handler(w http.ResponseWriter, r *http.Request) {
         fmt.Fprintf(w, "Weather service OK")
       }
-
       func main() {
         http.HandleFunc("/", handler)
         http.ListenAndServe(":8082", nil)
@@ -57,11 +54,21 @@
   ansible.builtin.command:
     cmd: docker build -t weather_app:v1 .
     chdir: /opt/weather_project
+  register: docker_build
+  changed_when: docker_build.rc == 0
+
+- name: Stop existing container if running
+  ansible.builtin.command:
+    cmd: docker stop weather_container
+  ignore_errors: yes
+
+- name: Remove existing container
+  ansible.builtin.command:
+    cmd: docker rm weather_container
+  ignore_errors: yes
 
 - name: Run container
-  ansible.builtin.docker_container:
-    name: weather_container
-    image: weather_app:v1
-    state: started
-    ports:
-      - "8082:8082"
+  ansible.builtin.command:
+    cmd: docker run -d --name weather_container -p 8082:8082 weather_app:v1
+  register: container_run
+  changed_when: container_run.rc == 0
