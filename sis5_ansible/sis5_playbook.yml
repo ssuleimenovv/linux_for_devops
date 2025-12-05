@@ -1,0 +1,9 @@
+---
+- name: SIS5 – full automation of SIS2, SIS3, SIS4
+  hosts: local
+  become: yes
+
+  roles:
+    - sis2
+    - sis3
+    - sis4

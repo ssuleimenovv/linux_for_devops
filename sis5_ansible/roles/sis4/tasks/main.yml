@@ -1,0 +1,67 @@
+---
+- name: Install Docker
+  ansible.builtin.apt:
+    name: docker.io
+    state: present
+    update_cache: yes
+
+- name: Enable Docker
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: yes
+
+- name: Create weather project directory
+  ansible.builtin.file:
+    path: /opt/weather_project
+    state: directory
+
+- name: Copy main.go
+  ansible.builtin.copy:
+    dest: /opt/weather_project/main.go
+    content: |
+      package main
+
+      import (
+        "fmt"
+        "net/http"
+      )
+
+      func handler(w http.ResponseWriter, r *http.Request) {
+        fmt.Fprintf(w, "Weather service OK")
+      }
+
+      func main() {
+        http.HandleFunc("/", handler)
+        http.ListenAndServe(":8082", nil)
+      }
+
+- name: Create go.mod
+  ansible.builtin.copy:
+    dest: /opt/weather_project/go.mod
+    content: |
+      module weather_app
+      go 1.22
+
+- name: Create Dockerfile
+  ansible.builtin.copy:
+    dest: /opt/weather_project/Dockerfile
+    content: |
+      FROM golang:1.22
+      WORKDIR /app
+      COPY . .
+      RUN go build -o weather_app
+      CMD ["./weather_app"]
+
+- name: Build Docker image
+  ansible.builtin.command:
+    cmd: docker build -t weather_app:v1 .
+    chdir: /opt/weather_project
+
+- name: Run container
+  ansible.builtin.docker_container:
+    name: weather_container
+    image: weather_app:v1
+    state: started
+    ports:
+      - "8082:8082"

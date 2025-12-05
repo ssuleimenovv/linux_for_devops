@@ -1,0 +1,232 @@
+---
+- name: SIS5 — Automation of SIS2, SIS3, SIS4
+  hosts: all
+  become: yes
+
+  vars:
+    app_name: weather_city_selector
+    app_dir: "/home/{{ ansible_user }}/weather_city_selector"
+    log_dir: "/home/{{ ansible_user }}/weather_city_selector_logs"
+    docker_user: "{{ ansible_user }}"
+    image_tag: "v1.0"
+
+  tasks:
+
+    ###########################################################################
+    # SIS2 – USERS, GROUPS, PERMISSIONS
+    ###########################################################################
+
+    - name: Create groups
+      group:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - admins
+        - auditors
+        - automation
+        - postgres_grp
+        - web
+
+    - name: Create users
+      user:
+        name: "{{ item.name }}"
+        group: "{{ item.group }}"
+        shell: /bin/bash
+        create_home: yes
+      loop:
+        - { name: "admin1",   group: "admins" }
+        - { name: "auditor1", group: "auditors" }
+        - { name: "autobot",  group: "automation" }
+        - { name: "pguser",   group: "postgres_grp" }
+        - { name: "webuser",  group: "web" }
+
+    - name: Force password reset for users
+      command: "passwd -e {{ item }}"
+      loop:
+        - admin1
+        - auditor1
+        - autobot
+        - pguser
+        - webuser
+
+    - name: Add sudo rights to admin
+      user:
+        name: admin1
+        groups: sudo
+        append: yes
+
+    - name: Give auditor read access to syslog
+      acl:
+        path: /var/log/syslog
+        entity: auditor1
+        etype: user
+        permissions: r
+        state: present
+
+    - name: Add sudo permission for autobot
+      copy:
+        dest: /etc/sudoers.d/autobot
+        content: "autobot ALL=(ALL) NOPASSWD:/bin/systemctl restart nginx"
+        mode: '0440'
+
+    - name: Setup SSH keys for autobot
+      authorized_key:
+        user: autobot
+        state: present
+        key: "{{ lookup('file', 'files/autobot_id_rsa.pub') }}"
+
+    ###########################################################################
+    # SIS3 – Install environment, Go app, run smoke test
+    ###########################################################################
+
+    - name: Install base tools
+      apt:
+        name:
+          - git
+          - curl
+          - make
+          - ufw
+          - golang-go
+        update_cache: yes
+        state: present
+
+    - name: Create Go project directory
+      file:
+        path: "/home/{{ ansible_user }}/go_projects/sis3_project"
+        state: directory
+
+    - name: Copy main.go for SIS3 app
+      copy:
+        src: files/sis3_main.go
+        dest: "/home/{{ ansible_user }}/go_projects/sis3_project/main.go"
+
+    - name: Init Go module
+      command: go mod init sis3_project
+      args:
+        chdir: "/home/{{ ansible_user }}/go_projects/sis3_project"
+      ignore_errors: yes
+
+    - name: Run go mod tidy
+      command: go mod tidy
+      args:
+        chdir: "/home/{{ ansible_user }}/go_projects/sis3_project"
+
+    - name: Build SIS3 app
+      command: go build -o sis3_app
+      args:
+        chdir: "/home/{{ ansible_user }}/go_projects/sis3_project"
+
+    - name: Run SIS3 app in background
+      shell: "nohup ./sis3_app > app.log 2>&1 &"
+      args:
+        chdir: "/home/{{ ansible_user }}/go_projects/sis3_project"
+
+    ###########################################################################
+    # SIS4 – Weather selector, Docker, Systemd, Cron
+    ###########################################################################
+
+    - name: Install dependencies (Go, jq, curl)
+      apt:
+        name:
+          - jq
+          - curl
+          - ca-certificates
+          - gnupg
+          - lsb-release
+        state: present
+
+    - name: Install Docker repository
+      shell: |
+        install -m 0755 -d /etc/apt/keyrings
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+        https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
+        > /etc/apt/sources.list.d/docker.list
+      args:
+        creates: /etc/apt/sources.list.d/docker.list
+
+    - name: Install Docker
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
+
+    - name: Ensure Docker is running
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Create project directory
+      file:
+        path: "{{ app_dir }}"
+        state: directory
+
+    - name: Create logs directory
+      file:
+        path: "{{ log_dir }}"
+        state: directory
+
+    - name: Copy main.go for Weather App
+      copy:
+        src: files/weather_main.go
+        dest: "{{ app_dir }}/main.go"
+
+    - name: Copy Dockerfile
+      copy:
+        src: files/Dockerfile
+        dest: "{{ app_dir }}/Dockerfile"
+
+    - name: Build Docker image
+      command: docker build -t "{{ docker_user }}/{{ app_name }}:{{ image_tag }}" .
+      args:
+        chdir: "{{ app_dir }}"
+
+    - name: Install systemd service
+      copy:
+        dest: "/etc/systemd/system/{{ app_name }}.service"
+        content: |
+          [Unit]
+          Description=Weather City Selector
+          After=network.target
+
+          [Service]
+          ExecStart=/usr/bin/docker run --rm -p 8081:8081 -v {{ log_dir }}:/app {{ docker_user }}/{{ app_name }}:{{ image_tag }}
+          Restart=on-failure
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Reload systemd
+      command: systemctl daemon-reload
+
+    - name: Enable service
+      service:
+        name: "{{ app_name }}.service"
+        enabled: yes
+        state: restarted
+
+    - name: Copy cron scripts
+      copy:
+        src: "files/{{ item }}"
+        dest: "{{ app_dir }}/{{ item }}"
+        mode: "0755"
+      loop:
+        - update_city_weather.sh
+        - log_city_weather.sh
+        - cleanup_city_weather.sh
+
+    - name: Register cron jobs
+      cron:
+        name: "{{ item.name }}"
+        minute: "{{ item.minute }}"
+        hour: "{{ item.hour }}"
+        job: "{{ app_dir }}/{{ item.script }}"
+      loop:
+        - { name: "Update weather", minute: "*/5",  hour: "*", script: "update_city_weather.sh" }
+        - { name: "Log weather",    minute: "*/10", hour: "*", script: "log_city_weather.sh" }
+        - { name: "Cleanup logs",   minute: "0",    hour: "3", script: "cleanup_city_weather.sh" }

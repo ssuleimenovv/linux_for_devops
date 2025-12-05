@@ -1,0 +1,42 @@
+---
+- name: Create required groups
+  ansible.builtin.group:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - admins
+    - auditors
+    - automation
+    - postgres_grp
+    - web
+
+- name: Create users
+  ansible.builtin.user:
+    name: "{{ item.name }}"
+    group: "{{ item.group }}"
+    state: present
+  loop:
+    - { name: "admin1", group: "admins" }
+    - { name: "auditor1", group: "auditors" }
+    - { name: "autobot", group: "automation" }
+    - { name: "pguser", group: "postgres_grp" }
+    - { name: "webuser", group: "web" }
+
+- name: Add admin1 to sudo group
+  ansible.builtin.user:
+    name: admin1
+    groups: sudo
+    append: yes
+
+- name: Give auditor1 read access to syslog
+  ansible.builtin.file:
+    path: /var/log/syslog
+    owner: syslog
+    group: auditors
+    mode: '0640'
+
+- name: Allow autobot restart nginx without password
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/autobot
+    content: "autobot ALL=(ALL) NOPASSWD: /usr/sbin/service nginx restart"
+    mode: '0440'
