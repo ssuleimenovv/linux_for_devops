@@ -142,7 +142,10 @@ After=network.target
 
 [Service]
 ExecStart=/usr/bin/docker run --rm -p 8081:8081 -v $LOG_DIR:/app --name weather_city_container $DOCKER_USER/$APP_NAME:$IMAGE_TAG
+HEAD
 ExecStop=/usr/bin/docker stop weather_city_container
+
+d105bad427f38f8c01167c4c7073e3249c769036
 Restart=on-failure
 
 [Install]
