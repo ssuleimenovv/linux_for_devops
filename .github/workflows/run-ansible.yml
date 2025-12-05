@@ -31,3 +31,4 @@ jobs:
     - name: Run Ansible playbook
       run: |
         ansible-playbook sis5_ansible/sis5_playbook.yml -i sis5_ansible/inventory/hosts.ini
+
